@@ -7,42 +7,73 @@ from glob import glob
 
 def convert_markdown_to_json(file_path):
     """
-    Parses a specially formatted markdown quiz file and converts it into a JSON structure.
+    Parses a specially formatted markdown quiz file and converts it into a JSON structure,
+    capturing content within ``` blocks for a 'question_markdown' field.
     """
     try:
         file_name = os.path.basename(file_path)
         
         with open(file_path, 'r', encoding='utf-8') as f:
-            lines = [line.strip() for line in f.readlines() if line.strip()]
+            raw_lines = f.readlines()
 
         questions = []
         current_question = None
+        is_in_markdown_block = False
 
-        for line in lines:
+        for raw_line in raw_lines:
+            line = raw_line.strip()
+
+            # --- LOGIC FOR MARKDOWN BLOCK (```) ---
+            # Check for the start or end of a markdown block
+            if line.startswith('```'):
+                if not is_in_markdown_block:
+                    # Start of the block
+                    is_in_markdown_block = True
+                    if current_question:
+                        current_question['question_markdown'] = raw_line
+                else:
+                    # End of the block
+                    is_in_markdown_block = False
+                    if current_question:
+                        current_question['question_markdown'] += raw_line
+                continue
+
+            # If we are inside a markdown block, append the raw line and continue
+            if is_in_markdown_block:
+                if current_question:
+                    current_question['question_markdown'] += raw_line
+                continue
+
+            # Skip empty lines if not in a markdown block
+            if not line:
+                continue
+            
+            # --- EXISTING PARSING LOGIC ---
             # Check for a new question header (####)
             if line.startswith('####'):
                 if current_question:
                     questions.append(current_question)
                 
+                # Initialize the new question object with the new field
                 current_question = {
                     "question": line[4:].strip(),
                     "picture_url": "",
                     "correct_answer": -1,
-                    "options": []
+                    "options": [],
+                    "question_markdown": "" # Add the new field
                 }
                 continue
 
             if not current_question:
                 continue
 
-            # Check for an image using regex
+            # Check for an image
             image_match = re.match(r'!\[.*\]\((.*)\)', line)
             if image_match:
                 current_question["picture_url"] = image_match.group(1)
                 continue
 
-            # --- FIX ---
-            # Corrected regex to match lines starting with "- [ ]" or "- [x]"
+            # Check for an option
             option_match = re.match(r'-\s*\[(x| )\]\s*(.*)', line)
             if option_match:
                 is_correct = option_match.group(1).lower() == 'x'
@@ -53,14 +84,13 @@ def convert_markdown_to_json(file_path):
                     "is_correct": is_correct
                 })
                 
-                # If this option is correct, set the parent question's correct_answer index
                 if is_correct:
                     current_question["correct_answer"] = len(current_question["options"]) - 1
         
         if current_question:
             questions.append(current_question)
 
-        # Get the file's last modification time
+        # Get and add the file's last modification time
         last_modified_timestamp = os.path.getmtime(file_path)
         updated_at = datetime.fromtimestamp(last_modified_timestamp).isoformat()
         
@@ -96,7 +126,6 @@ def main():
     # Construct a recursive glob pattern to find all .md files
     glob_pattern = os.path.join(root_path, '**', '*.md')
     
-    # Use the recursive=True flag with glob
     markdown_files = glob(glob_pattern, recursive=True)
 
     if not markdown_files:
@@ -110,7 +139,6 @@ def main():
         json_data = convert_markdown_to_json(md_file_path)
 
         if json_data:
-            # Create the output filename by replacing .md with .json
             output_filename = os.path.splitext(md_file_path)[0] + '.json'
             
             with open(output_filename, 'w', encoding='utf-8') as f:
